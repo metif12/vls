@@ -17874,3 +17874,71 @@ fn test_renp_without_a_server_the_check_runs_in_a_compiler_of_its_own() {
 		assert line == 'oneshot -new-compiler -check -nocolor .', 'the check ran another command line: ${line}'
 	}
 }
+
+fn cap_errors(n int) []JsonError {
+	mut errors := []JsonError{}
+	for i in 1 .. n + 1 {
+		errors << JsonError{
+			message: 'error ${i}'
+			line_nr: i
+			col:     1
+			len:     1
+			level:   'error'
+		}
+	}
+	return errors
+}
+
+fn test_cap_over_the_cap_keeps_the_first_and_marks_the_rest() {
+	mut app := App{}
+	got := app.diagnostics_notification_for('file:///x.v', 'x\n'.repeat(150), cap_errors(150)).params.diagnostics
+	assert got.len == 101, 'the cap plus one marker: got ${got.len}'
+	assert got[0].message == 'error 1', 'the first error was dropped: ${got[0].message}'
+	assert got[99].message == 'error 100', 'the kept list stops short of the cap: ${got[99].message}'
+	markers := got.filter(it.message == '... and 50 more')
+	assert markers.len == 1, 'exactly one marker expected: got ${markers.len}'
+	assert markers[0].severity == 3, 'the marker must be information (3): got ${markers[0].severity}'
+	assert (markers[0].source or { '' }) == '', 'the marker must carry no source: ${markers[0].source}'
+	assert (markers[0].code or { '' }) == '', 'the marker must carry no code: ${markers[0].code}'
+}
+
+fn test_cap_at_the_cap_is_untouched() {
+	mut app := App{}
+	got := app.diagnostics_notification_for('file:///x.v', 'x\n'.repeat(100), cap_errors(100)).params.diagnostics
+	assert got.len == 100, 'a list at the cap passes through whole: got ${got.len}'
+	assert !got.any(it.message.contains(' and ')), 'a list at the cap gained a marker'
+}
+
+fn test_cap_under_the_cap_is_byte_identical() {
+	mut app := App{}
+	mut expected := []LSPDiagnostic{}
+	for i in 0 .. 3 {
+		expected << LSPDiagnostic{
+			range:    LSPRange{
+				start: Position{ line: i, char: 0 }
+				end:   Position{ line: i, char: 1 }
+			}
+			message:  'error ${i + 1}'
+			severity: 1
+			source:   'vlang'
+		}
+	}
+	got := app.diagnostics_notification_for('file:///x.v', 'x\n'.repeat(3), cap_errors(3)).params.diagnostics
+	assert json2.encode(got) == json2.encode(expected), 'a list under the cap must be byte-identical: ${json2.encode(got)}'
+}
+
+fn test_cap_empty_stays_empty() {
+	mut app := App{}
+	got := app.diagnostics_notification_for('file:///x.v', 'module main\n', []JsonError{}).params.diagnostics
+	assert got.len == 0, 'an empty list must publish empty: got ${got.len}'
+}
+
+fn test_cap_dedup_runs_before_the_cap() {
+	mut app := App{}
+	mut errors := cap_errors(150)
+	errors << cap_errors(100)
+	got := app.diagnostics_notification_for('file:///x.v', 'x\n'.repeat(150), errors).params.diagnostics
+	assert got.len == 101, 'dedup then cap leaves 101: got ${got.len}'
+	assert got[100].message == '... and 50 more', 'dedup ran before the cap: ${got[100].message}'
+	assert (got[100].source or { 'none' }) == 'none', 'the marker carries no source: ${got[100].source}'
+}

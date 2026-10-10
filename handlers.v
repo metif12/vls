@@ -4772,6 +4772,9 @@ fn (mut app App) on_did_open(request Request) bool {
 			return false
 		}
 	}
+	// A project's `vls.json` is read when one of its files is opened, so its
+	// switches are in step with the first check rather than the next one.
+	app.apply_project_settings(app.project_config_for_path(uri_to_path(uri)))
 	diagnostics_mutation := app.begin_diagnostics_project_schedule(uri)
 	app.open_files[uri] = content
 	// A file appearing is what the fingerprint's listing memo cannot see by
@@ -4853,6 +4856,13 @@ fn (mut app App) build_diagnostics_notification(uri string, content string) Noti
 	return app.diagnostics_notification_for(uri, content, v_errors)
 }
 
+// The editor repaints every diagnostic published for one file, so a file the
+// compiler reports hundreds of errors for makes the editor itself slow to
+// respond. 100 is far above the handful a cascade produces and above what the
+// Problems panel is useful for, while the first ones in position order carry
+// the real error the cascade grew from.
+const max_published_diagnostics = 100
+
 // diagnostics_notification_for turns the compiler's errors for one file into
 // the notification that publishes them.
 fn (mut app App) diagnostics_notification_for(uri string, content string, v_errors []JsonError) Notification {
@@ -4871,6 +4881,32 @@ fn (mut app App) diagnostics_notification_for(uri string, content string, v_erro
 		// The compiler reports byte columns; re-encode the diagnostic range in
 		// the client's negotiated encoding (P0-01).
 		diagnostics << app.encode_diagnostic_range(v_error_to_lsp_diagnostic(v_err), lines)
+	}
+	// Cap what reaches the editor, keeping the first diagnostics in the order
+	// the compiler reported them (position order), so a cascade never buries
+	// its first, real error under its own fallout. The marker is appended so
+	// the truncation is visible instead of silently hiding diagnostics; the
+	// dedup above already ran, so `trimmed` counts real diagnostics.
+	if diagnostics.len > max_published_diagnostics {
+		trimmed := diagnostics.len - max_published_diagnostics
+		diagnostics.trim(max_published_diagnostics)
+		diagnostics << LSPDiagnostic{
+			range:    LSPRange{
+				start: Position{
+					line: 0
+					char: 0
+				}
+				end:   Position{
+					line: 0
+					char: 0
+				}
+			}
+			message:  '... and ${trimmed} more'
+			severity: 3 // information
+			source:   none
+			code:     none
+			tags:     none
+		}
 	}
 	pd_params := PublishDiagnosticsParams{
 		uri:         uri
@@ -8905,6 +8941,11 @@ fn (mut app App) on_initialize(request Request) ?string {
 	if roots.len > 0 {
 		app.workspace_roots = roots
 		log('VLS: workspace roots set to ${roots}')
+		// A workspace root's own `vls.json` is read at once, so a project
+		// folder's switches apply before any of its files is opened.
+		for root in roots {
+			app.apply_project_settings(app.project_config_for_root(root))
+		}
 	}
 	app.supports_dynamic_watched_files_registration =
 		client_supports_dynamic_watched_files_registration(params)
