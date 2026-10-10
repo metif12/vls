@@ -268,6 +268,58 @@ fn test_hx_cross_file_function_hover_links_the_file() {
 	assert nested.ends_with('\n\n[nested/deep.v](nested/deep.v)'), 'hx_cross_file: nested is ${nested}'
 }
 
+fn test_hx_module_const_hover_shows_the_value() {
+	mut app := hx_app()
+	defer {
+		os.rmdir_all(app.temp_dir) or {}
+	}
+	// A module of the project with a constant, and a file that uses it
+	// qualified without importing it: the module resolves the way an import
+	// would, and the value is the one the declaration states.
+	shapes := 'module shapes\n\npub const max_size = 8\n\npub const label = \'"box"\'\n'
+	main_src := 'module main\n\nfn build() {\n\tsize := shapes.max_size\n\tprintln(size)\n}\n'
+	uris := hx_project({
+		'main.v':          main_src
+		'shapes/shapes.v': shapes
+	}, 'hx_modconst', mut app)
+	uri := uris['main.v'] or { '' }
+	assert uri != '', 'hx_modconst: no uri for main.v'
+	hovered := hx_hover_on(mut app, uri, main_src, 'size := shapes.max_size', 'max_size')
+	assert hovered == '```v\nshapes.max_size = 8\n```', 'hx_modconst: int is ${hovered}'
+	// A string constant shows its quotes, as the declaration writes them.
+	label_main := 'module main\n\nfn build() {\n\tprintln(shapes.label)\n}\n'
+	app.open_files[uri] = label_main
+	app.reindex_uri(uri)
+	text := hx_hover_on(mut app, uri, label_main, 'println(shapes.label)', 'label')
+	assert text == '```v\nshapes.label = \'"box"\'\n```', 'hx_modconst: string is ${text}'
+}
+
+fn test_hx_module_const_hover_refuses_a_local_named_like_the_module() {
+	mut app := hx_app()
+	defer {
+		os.rmdir_all(app.temp_dir) or {}
+	}
+	// A local bound to a folder's name is not that module, so nothing is
+	// answered for `shapes.max_size` while `shapes` is a local.
+	shapes := 'module shapes\n\npub const max_size = 8\n'
+	main_src := 'module main\n\nfn build() {\n\tshapes := 1\n\tprintln(shapes.max_size)\n}\n'
+	uris := hx_project({
+		'main.v':          main_src
+		'shapes/shapes.v': shapes
+	}, 'hx_modlocal', mut app)
+	uri := uris['main.v'] or { '' }
+	assert uri != '', 'hx_modlocal: no uri for main.v'
+	hovered := hx_hover_on(mut app, uri, main_src, 'println(shapes.max_size)', 'max_size')
+	assert hovered == 'null', 'hx_modlocal: a local answered ${hovered}'
+}
+
+// hx_hover_on answers the selector hover for `word` on the line that reads
+// `line_text`, as the request handler reaches it.
+fn hx_hover_on(mut app App, uri string, content string, line_text string, word string) string {
+	position := hx_pos_of(content, line_text, word)
+	return hx_value(app.member_selector_hover(uri, position))
+}
+
 fn test_hx_hover_refuses_what_the_index_does_not_know() {
 	mut app := hx_app()
 	defer {

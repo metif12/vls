@@ -983,6 +983,12 @@ fn (mut app App) member_selector_hover(uri string, position Position) ?Hover {
 	if variant := app.enum_variant_hover(uri, content, receiver, name) {
 		return variant
 	}
+	// A constant of a module, `shapes.max_size`, whose value its declaration
+	// states: the index has the module's files, and the compiler answers
+	// nothing for a qualified name it did not resolve to an import.
+	if module_const := app.module_const_hover(uri, content, receiver, name) {
+		return module_const
+	}
 	typ := app.expression_type(uri, content, receiver, position)
 	if typ == '' {
 		return none
@@ -1084,6 +1090,88 @@ fn (mut app App) enum_variant_hover(uri string, content string, receiver string,
 			value: '```v\n${receiver}.${name} = ${value}\n```'
 		}
 	}
+}
+
+// module_receiver_is_local reports whether `name` is bound in this file: a
+// local, a parameter, or a declaration. A bound name is never a module, even
+// when a folder shares its name.
+fn module_receiver_is_local(content string, candidate string) bool {
+	if candidate == '' {
+		return false
+	}
+	for raw in content.split_into_lines() {
+		trimmed := raw.trim_space()
+		if trimmed.starts_with('//') {
+			continue
+		}
+		op := trimmed.index(' := ') or { -1 }
+		if op > 0 {
+			lhs := trimmed[..op].trim_space().trim_string_left('mut ').trim_space()
+			if lhs == candidate {
+				return true
+			}
+		}
+		if trimmed.starts_with('mut ') {
+			rest := trimmed[4..].trim_space()
+			space := rest.index(' ') or { -1 }
+			if space > 0 && rest[..space] == candidate {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// module_const_hover answers for a constant reached through its module,
+// `shapes.max_size`. The module is resolved the way an import of it would be,
+// so a local named like the module is never followed, and the value is the one
+// the declaration line states. Nothing is invented: no module, no declaration
+// or no literal means no hover.
+fn (mut app App) module_const_hover(uri string, content string, module_name string, name string) ?Hover {
+	if module_name == '' || name == '' || !is_plain_identifier(module_name)
+		|| module_name in v_keywords {
+		return none
+	}
+	// A local of this file is not a module, even when a folder shares its name.
+	if module_receiver_is_local(content, module_name) {
+		return none
+	}
+	module_dir := app.resolve_indexed_import_module_dir(module_name, os.dir(uri_to_path(uri)))
+	if module_dir == '' {
+		return none
+	}
+	app.ensure_dir_shallow_indexed(module_dir)
+	normalized_dir := normalized_index_path(module_dir)
+	mut indexed_uris := app.symbol_index.keys()
+	indexed_uris.sort()
+	for indexed_uri in indexed_uris {
+		indexed_entry := app.symbol_index[indexed_uri] or { continue }
+		if normalized_index_path(os.dir(uri_to_path(indexed_uri))) != normalized_dir {
+			continue
+		}
+		source := app.index_source_for(indexed_uri) or { continue }
+		source_lines := source.split_into_lines()
+		for symbol in indexed_entry.doc_symbols {
+			if symbol.kind != sym_kind_constant || symbol.name != name {
+				continue
+			}
+			if symbol.range.start.line < 0 || symbol.range.start.line >= source_lines.len {
+				continue
+			}
+			declaration := source_lines[symbol.range.start.line]
+			value := declaration_const_value(declaration, name)
+			if value == '' {
+				continue
+			}
+			return Hover{
+				contents: MarkupContent{
+					kind:  'markdown'
+					value: '```v\n${module_name}.${name} = ${value}\n```'
+				}
+			}
+		}
+	}
+	return none
 }
 
 // indexed_enum_member_declaration returns the line that declares the member
