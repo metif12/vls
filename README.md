@@ -94,8 +94,10 @@ in the editor, put a `vls.json` in the folder that holds the nearest `v.mod`:
 
 A `vls.json` may also set `inlayHints` and `diagnostics`, the two feature switches. The settings
 the editor sends win over the project's file, and the file over `VLS_DEFINES` in the environment,
-which also works for an editor with no settings of its own. The defines reach the checks only:
-`v fmt`, hover, go-to-definition and completion run without them. The code inside
+which also works for an editor with no settings of its own. The nearest `vls.json` is read when a
+file of its project is opened, so its switches apply before the first check rather than after it.
+The keys the file accepts are listed in [`vls.schema.json`](vls.schema.json). The defines reach
+the checks only: `v fmt`, hover, go-to-definition and completion run without them. The code inside
 `$if !flag ? { ... }` is then the one left unchecked.
 
 ### Features

@@ -6,6 +6,7 @@
 // with one in another file would not compile.
 module main
 
+import json2
 import os
 import time
 
@@ -307,4 +308,107 @@ fn test_config_the_defines_make_the_compiler_check_the_gated_code() {
 	store.drop_config(root)
 	gated := app.run_v_check(uri, content)
 	assert gated.any(it.message.contains('undef_fn_bespin_probe')), 'the define made the compiler check the gated code: ${gated}'
+}
+
+// config_test_app_open is config_test_app for the tests that open a file: the
+// two switches start on, as they do in the server, so a project's `vls.json` is
+// the only thing that can turn one off.
+fn config_test_app_open(root string) &App {
+	mut store := vls_config_store()
+	store.set_editor_settings(EditorSettings{})
+	store.drop_config(root)
+	return &App{
+		temp_dir:            root
+		workspace_roots:     [root]
+		inlay_hints_enabled: true
+		diagnostics_enabled: true
+	}
+}
+
+// config_test_did_open_request is the notification an editor sends when a file
+// is opened. It carries no text, so the server reads the file the test wrote.
+fn config_test_did_open_request(uri string) Request {
+	return Request{
+		id:     1
+		method: 'textDocument/didOpen'
+		params: '{"textDocument":{"uri":${json2.encode(uri)}}}'
+	}
+}
+
+fn test_config_opening_a_file_applies_the_project_switches_at_once() {
+	root := config_test_project('open')
+	defer {
+		os.rmdir_all(root) or {}
+	}
+	config_test_write(os.join_path(root, 'vls.json'), '{"inlayHints":false,"diagnostics":false}')
+	source := os.join_path(root, 'main.v')
+	config_test_write(source, 'module main\n\nfn main() {}\n')
+	mut app := config_test_app_open(root)
+	assert app.inlay_hints_enabled && app.diagnostics_enabled, 'both switches start on'
+	app.on_did_open(config_test_did_open_request(path_to_uri(source)))
+	assert !app.inlay_hints_enabled, 'opening a file applies the project inlayHints, not the next check'
+	assert !app.diagnostics_enabled, 'opening a file applies the project diagnostics'
+}
+
+fn test_config_opening_a_file_keeps_the_editor_switches() {
+	root := config_test_project('openeditor')
+	defer {
+		os.rmdir_all(root) or {}
+	}
+	config_test_write(os.join_path(root, 'vls.json'), '{"inlayHints":false,"diagnostics":false}')
+	source := os.join_path(root, 'main.v')
+	config_test_write(source, 'module main\n\nfn main() {}\n')
+	mut app := config_test_app_open(root)
+	app.apply_editor_configuration('{"settings":{"vls":{"inlayHints":true,"diagnostics":true}}}')
+	app.on_did_open(config_test_did_open_request(path_to_uri(source)))
+	assert app.inlay_hints_enabled, 'the editor inlayHints wins over the file of the opened project'
+	assert app.diagnostics_enabled, 'the editor diagnostics wins over the file of the opened project'
+}
+
+fn test_config_opening_a_file_of_a_project_without_a_config_changes_nothing() {
+	root := config_test_project('opennone')
+	defer {
+		os.rmdir_all(root) or {}
+	}
+	source := os.join_path(root, 'main.v')
+	config_test_write(source, 'module main\n\nfn main() {}\n')
+	mut app := config_test_app_open(root)
+	app.on_did_open(config_test_did_open_request(path_to_uri(source)))
+	assert app.inlay_hints_enabled, 'a project without vls.json leaves inlay hints alone'
+	assert app.diagnostics_enabled, 'a project without vls.json leaves diagnostics alone'
+}
+
+fn test_config_opening_a_file_of_the_nearest_project_uses_its_own_config() {
+	outer := config_test_project('openouter')
+	defer {
+		os.rmdir_all(outer) or {}
+	}
+	config_test_write(os.join_path(outer, 'vls.json'), '{"inlayHints":false}')
+	inner := os.join_path(outer, 'inner')
+	config_test_must_mkdir_all(inner)
+	config_test_write(os.join_path(inner, 'v.mod'), config_test_vmod)
+	config_test_write(os.join_path(inner, 'vls.json'), '{"inlayHints":true}')
+	inner_source := os.join_path(inner, 'main.v')
+	config_test_write(inner_source, 'module main\n\nfn main() {}\n')
+	outer_source := os.join_path(outer, 'main.v')
+	config_test_write(outer_source, 'module main\n\nfn main() {}\n')
+	mut app := config_test_app_open(outer)
+	app.on_did_open(config_test_did_open_request(path_to_uri(inner_source)))
+	assert app.inlay_hints_enabled, 'the nearest v.mod decides, not the one at the workspace root'
+	app.on_did_open(config_test_did_open_request(path_to_uri(outer_source)))
+	assert !app.inlay_hints_enabled, 'a file of the outer project uses the outer vls.json'
+}
+
+fn test_config_opening_a_file_leaves_the_defines_of_a_check_alone() {
+	root := config_test_project('opendefines')
+	defer {
+		os.rmdir_all(root) or {}
+	}
+	config_test_write(os.join_path(root, 'vls.json'), '{"defines":["-dbespin"]}')
+	source := os.join_path(root, 'main.v')
+	config_test_write(source, 'module main\n\nfn main() {}\n')
+	mut app := config_test_app_open(root)
+	app.on_did_open(config_test_did_open_request(path_to_uri(source)))
+	assert app.check_defines(source) == ['-d', 'bespin'], 'an open reads the same configuration a check does'
+	assert app.inlay_hints_enabled, 'a file that sets only defines leaves the switches alone'
 }
