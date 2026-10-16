@@ -85,6 +85,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: gh release --generate-notes compares against the
+          # previous tag, and gh itself needs a git repo to find the owner.
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: assets
