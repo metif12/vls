@@ -1011,8 +1011,11 @@ fn (mut app App) handle_requests[T](mut reader T) {
 							// range, and no edit at all otherwise.
 							document_range_formatting_provider: true
 							// Imports link to the module they name, and a URL in a doc
-							// comment is clickable as written.
-							document_link_provider:             true
+							// comment is clickable as written. No resolve step:
+							// links arrive complete, so resolve_provider is false.
+							document_link_provider:             DocumentLinkOptions{
+								resolve_provider: false
+							}
 							position_encoding:                  position_encoding_string(app.position_encoding)
 							workspace:                          WorkspaceCapability{
 								workspace_folders: WorkspaceFoldersServerCapability{
