@@ -2,9 +2,12 @@ name: Build VLS release
 
 # Cut a VLS release for the Zed extension by pushing a tag:
 #   git tag vls-1 && git push fork vls-1
-# Each platform job builds with pinned V 0.5.2, zips the server binary,
-# and uploads it as a job artifact; the release job publishes all three
-# zips to one GitHub release. Asset names are the extension's contract:
+# Each platform job builds V from source (exactly like upstream VLS CI:
+# vlang/v master plus its own bootstrap snapshot, so there is no
+# version-resolution step to go stale), then builds this tree with it,
+# zips the server binary, and uploads it as a job artifact; the release
+# job publishes all three zips to one GitHub release. Asset names are the
+# extension's contract:
 #   vls-windows-x86_64.zip (contains vls.exe)
 #   vls-linux-x86_64.zip   (contains vls)
 #   vls-macos-aarch64.zip  (contains vls)
@@ -25,29 +28,46 @@ jobs:
         include:
           - os: windows-latest
             asset: vls-windows-x86_64.zip
+            binary: vls.exe
           - os: ubuntu-latest
             asset: vls-linux-x86_64.zip
+            binary: vls
           - os: macos-latest
             asset: vls-macos-aarch64.zip
+            binary: vls
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: vlang/setup-v@v1
+      - name: Checkout V
+        uses: actions/checkout@v4
         with:
-          version: 0.5.2
+          repository: vlang/v
+          path: v
+
+      - name: Checkout VLS
+        uses: actions/checkout@v4
+        with:
+          path: vls
+
+      - name: Build V
+        if: runner.os != 'Windows'
+        working-directory: v
+        run: make latest_tcc && make -j4
+
+      - name: Build V (Windows)
+        if: runner.os == 'Windows'
+        working-directory: v
+        run: ./makev.bat latest_tcc && ./makev.bat
 
       - name: Build VLS
-        run: v -o vls .
+        # Bare `v` resolves after the make steps above (same as upstream CI).
+        run: |
+          mkdir out
+          v -o out/${{ matrix.binary }} ./vls
 
       - name: Zip server binary
         shell: pwsh
-        run: |
-          if ("${{ runner.os }}" -eq "Windows") {
-            Compress-Archive -Path vls.exe -DestinationPath ${{ matrix.asset }}
-          } else {
-            Compress-Archive -Path vls -DestinationPath ${{ matrix.asset }}
-          }
+        run: Compress-Archive -Path out/${{ matrix.binary }} -DestinationPath ${{ matrix.asset }}
 
       - name: Upload asset
         uses: actions/upload-artifact@v4
