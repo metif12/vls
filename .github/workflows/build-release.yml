@@ -29,12 +29,15 @@ jobs:
           - os: windows-latest
             asset: vls-windows-x86_64.zip
             binary: vls.exe
+            vbin: .\v\v.exe
           - os: ubuntu-latest
             asset: vls-linux-x86_64.zip
             binary: vls
+            vbin: ./v/v
           - os: macos-latest
             asset: vls-macos-aarch64.zip
             binary: vls
+            vbin: ./v/v
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -60,10 +63,11 @@ jobs:
         run: ./makev.bat latest_tcc && ./makev.bat
 
       - name: Build VLS
-        # Bare `v` resolves after the make steps above (same as upstream CI).
+        # Explicit compiler path: bare `v` is not on PATH on Windows
+        # runners even after makev.bat (measured), so never rely on it.
         run: |
           mkdir out
-          v -o out/${{ matrix.binary }} ./vls
+          ${{ matrix.vbin }} -o out/${{ matrix.binary }} ./vls
 
       - name: Zip server binary
         shell: pwsh
