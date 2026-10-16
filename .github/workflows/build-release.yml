@@ -1,0 +1,75 @@
+name: Build VLS release
+
+# Cut a VLS release for the Zed extension by pushing a tag:
+#   git tag vls-1 && git push fork vls-1
+# Each platform job builds with pinned V 0.5.2, zips the server binary,
+# and uploads it as a job artifact; the release job publishes all three
+# zips to one GitHub release. Asset names are the extension's contract:
+#   vls-windows-x86_64.zip (contains vls.exe)
+#   vls-linux-x86_64.zip   (contains vls)
+#   vls-macos-aarch64.zip  (contains vls)
+on:
+  push:
+    tags:
+      - "vls-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: vls-windows-x86_64.zip
+          - os: ubuntu-latest
+            asset: vls-linux-x86_64.zip
+          - os: macos-latest
+            asset: vls-macos-aarch64.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: vlang/setup-v@v1
+        with:
+          version: 0.5.2
+
+      - name: Build VLS
+        run: v -o vls .
+
+      - name: Zip server binary
+        shell: pwsh
+        run: |
+          if ("${{ runner.os }}" -eq "Windows") {
+            Compress-Archive -Path vls.exe -DestinationPath ${{ matrix.asset }}
+          } else {
+            Compress-Archive -Path vls -DestinationPath ${{ matrix.asset }}
+          }
+
+      - name: Upload asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        run: |
+          ver="${GITHUB_REF#refs/tags/}"
+          gh release create "$ver" assets/*.zip \
+            --title "VLS $ver for Zed" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
