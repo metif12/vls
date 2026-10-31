@@ -241,6 +241,31 @@ fn test_pull_diagnostic_of_a_document_never_checked_answers_empty() {
 	assert empty_unchanged.result_id == result_id
 }
 
+// While the client has diagnostics disabled, pulls answer empty even when a
+// check once published errors: the push path clears instead of publishing,
+// so the pull agrees with that rather than re-serving stale markers. The
+// workspace report carries the document with no items, so the client clears.
+fn test_pull_and_workspace_are_empty_while_diagnostics_are_disabled() {
+	dir, uri, text := pd_project('pd_disabled', pd_main_source)
+	defer {
+		pd_cleanup(dir)
+	}
+	mut app := App{}
+	app.open_files[uri] = text
+	pd_seed(mut app, uri, pd_errors(2))
+	app.diagnostics_enabled = false
+
+	report := pd_report(pd_pull(mut app, uri, ''))
+	assert report.kind == 'full'
+	assert report.items.len == 0, 'a disabled pull serves no cached errors'
+
+	reports := pd_ws_reports(pd_ws_pull(mut app, map[string]string{}))
+	assert reports.len == 1, 'the document is still reported, got ${reports.len}'
+	assert reports[0].uri == uri
+	assert reports[0].kind == 'full'
+	assert reports[0].items.len == 0, 'the workspace report carries no items while disabled'
+}
+
 // initialize advertises the pull capability in the response the real handshake
 // writes, with both of its flags false.
 fn test_pull_diagnostic_capability_is_advertised_in_initialize() {
