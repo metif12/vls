@@ -46,8 +46,14 @@ fn (mut app App) handle_pull_diagnostic(request Request) Response {
 // pull_diagnostics_items rebuilds the item list last published for `uri`. An
 // absent cache entry is a document no check has answered for yet, which is an
 // empty list rather than an error. The buffer is read for the encoding step, so
-// a pull of a file on disk that was never opened answers from disk.
+// a pull of a file on disk that was never opened answers from disk. While the
+// client has diagnostics disabled the answer is empty even when a check once
+// published errors: the push path clears instead of publishing (see
+// build_diagnostics_notification), so a pull must agree with that.
 fn (mut app App) pull_diagnostics_items(uri string) []LSPDiagnostic {
+	if !app.diagnostics_enabled {
+		return []
+	}
 	mut v_errors := []JsonError{}
 	if cached := app.diag_cache[uri] {
 		v_errors = cached.errors
